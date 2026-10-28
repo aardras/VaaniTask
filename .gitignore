@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+CLAUDE.md
+# Virtual environment
+.venv/
+venv/
+
+# Data: FLEURS downloads and generated noisy audio (~1.4 GB, rebuilt by scripts/prepare_data.py).
+# data/manifest.csv is kept so the 120-utterance sample stays fixed.
+data/raw/
+data/audio/
+*.wav
+*.flac
+*.mp3
+*.tar.gz
+
+# Model weights / local HF caches
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+hf_cache/
+.cache/
+
+# Run logs and smoke-test runs
+logs/
+*.log
+results/*smoke*/
+
+# Secrets
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

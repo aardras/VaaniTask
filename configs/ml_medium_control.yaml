@@ -1,0 +1,23 @@
+run_name: ml_medium_control
+seed: 1234
+data:
+  languages: [ml_in]           # size control: stock medium, Malayalam only
+  n_per_language: 120
+  snr_db: [clean, 10, 0]        # "clean" = no added noise
+  root: data
+asr:
+  backend: hf                  # hf | faster_whisper
+  models:
+    ml_in: openai/whisper-medium
+  device: cuda
+  dtype: float16
+llm:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  load_in_4bit: true
+  max_new_tokens: 768           # upper bound; per-item cap = 1.5x transcript tokens + 32 (src/llm.py)
+judge:
+  model: Qwen/Qwen2.5-7B-Instruct
+  load_in_4bit: true
+  quantize_lm_head: true        # fp16 lm_head pushes the 7B past 6 GB: 15.9 -> 1.6 s/item, same labels
+latency:
+  warmup_items: 3
