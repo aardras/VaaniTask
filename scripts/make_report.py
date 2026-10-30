@@ -115,26 +115,34 @@ def attribution(base: pd.DataFrame, oracle: pd.DataFrame) -> str:
 
 
 def fig_cer_vs_snr(metrics: dict):
-    fig, axes = plt.subplots(1, 2, figsize=(9, 3.6), sharey=False)
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.1), sharey=False)
+    handles = {}
     for ax, lang in zip(axes, LANG):
+        placed = []  # end-label y positions, to skip labels that would collide
         for run, m in metrics.items():
             g = m[(m.lang == lang) & (m.snr != "ALL")].set_index("snr").reindex(SNR_ORDER).dropna(subset=["cer"])
             if g.empty:
                 continue
             x = [SNR_ORDER.index(s) for s in g.index]
-            ax.plot(x, 100 * g.cer, color=RUNS[run][1], lw=2, marker="o", ms=7,
-                    mec=SURF, mew=2, label=RUNS[run][0])
+            (h,) = ax.plot(x, 100 * g.cer, color=RUNS[run][1], lw=2, marker="o", ms=7,
+                           mec=SURF, mew=2, label=RUNS[run][0])
+            handles[run] = h
             ax.fill_between(x, 100 * g.cer_lo, 100 * g.cer_hi, color=RUNS[run][1], alpha=0.12, lw=0)
-            ax.annotate(f"{100 * g.cer.iloc[-1]:.0f}", (x[-1], 100 * g.cer.iloc[-1]), xytext=(6, 0),
-                        textcoords="offset points", va="center", color=INK2, fontsize=9)
+            end = 100 * g.cer.iloc[-1]
+            if all(abs(end - p) > 8 for p in placed):
+                ax.annotate(f"{end:.0f}", (x[-1], end), xytext=(6, 0),
+                            textcoords="offset points", va="center", color=INK2, fontsize=9)
+                placed.append(end)
         ax.set_xticks(range(3), ["clean", "10 dB", "0 dB"])
         ax.set_title(LANG[lang], loc="left")
         ax.set_ylabel("CER % (95% CI)")
         ax.set_ylim(bottom=0)
         ax.set_xlim(-0.2, 2.35)
-    axes[0].legend(loc="upper left", fontsize=8.5)
+    # One figure-level legend so runs that appear in only one panel (the size control) are listed.
+    fig.legend(list(handles.values()), [RUNS[r][0] for r in handles], loc="upper center",
+               bbox_to_anchor=(0.5, 0.93), ncol=2, fontsize=8.5)
     fig.suptitle("Character error rate rises with noise", x=0.01, ha="left", fontweight="bold")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.82))
     fig.savefig(FIG / "cer_vs_snr.png", dpi=160)
     plt.close(fig)
 
@@ -182,7 +190,8 @@ def fig_latency(scored: dict):
     ax.barh(y, asr, 0.6, color="#256abf", label="ASR")
     ax.barh(y, llm, 0.6, left=np.array(asr) + 0.02, color="#86b6ef", label="LLM")  # 2px-style gap
     for yi, a, l in zip(y, asr, llm):
-        ax.annotate(f"{a:.2f} + {l:.2f} s", (a + l + 0.02, yi), xytext=(4, 0),
+        text = f"{a:.2f} + {l:.2f} s" if l > 0 else f"{a:.2f} s (ASR only)"
+        ax.annotate(text, (a + l + 0.02, yi), xytext=(4, 0),
                     textcoords="offset points", va="center", fontsize=8.5, color=INK2)
     ax.set_yticks(y, labels, fontsize=8.5)
     ax.set_xlabel("Mean seconds per utterance (warm-ups excluded)")
@@ -193,6 +202,77 @@ def fig_latency(scored: dict):
     fig.tight_layout()
     fig.savefig(FIG / "latency_breakdown.png", dpi=160)
     plt.close(fig)
+
+
+REPLY_RUNS = {"baseline_reply": ("Baseline ASR", "#2a78d6"),
+              "improved_reply": ("Improved ASR", "#1baf7a"),
+              "baseline_oracle_reply": ("Gold transcript (oracle)", "#6250d6")}  # validated trio
+REPLY_COLS = [("acceptable", "Acceptable"), ("on_topic", "On-topic"), ("rj_misattribution", "Misattribution"),
+              ("rj_factual_halluc", "Factual halluc."), ("rj_clarification", "Asks to repeat"),
+              ("off_script", "Off-script")]
+
+
+def reply_table(reply: dict) -> str:
+    rows = ["| Run | Lang | SNR | n | ASR CER % | " + " | ".join(f"{h} %" for _, h in REPLY_COLS)
+            + " | LaBSE | LLM p50 s |", "|" + "---|" * (7 + len(REPLY_COLS))]
+    for run, m in reply.items():
+        for r in m[m.lang != "ALL"].itertuples():
+            cells = [pct(getattr(r, c), getattr(r, f"{c}_lo"), getattr(r, f"{c}_hi")) if c == "acceptable"
+                     else pct(getattr(r, c)) for c, _ in REPLY_COLS]
+            llm = getattr(r, "llm_s_p50", float("nan"))
+            rows.append(f"| {REPLY_RUNS[run][0]} | {LANG.get(r.lang, r.lang)} | {r.snr} | {r.n} | {pct(r.cer)} | "
+                        + " | ".join(cells) + f" | {r.labse_vs_said:.3f} | {llm:.2f} |")
+    return "\n".join(rows)
+
+
+def reply_paired(a: pd.DataFrame, b: pd.DataFrame) -> str:
+    j = a.merge(b, on="item_id", suffixes=("_a", "_b"))
+    rows = ["**Improved − Baseline, reply mode** (paired bootstrap on the same items; positive = more often)\n",
+            "| Lang | SNR | " + " | ".join(f"Δ{h} pts" for _, h in REPLY_COLS[:5]) + " |", "|" + "---|" * 7]
+    for (lang, snr), g in sorted(j.groupby(["lang_a", "snr_a"]), key=lambda x: (x[0][0], SNR_ORDER.index(x[0][1]))):
+        cells = []
+        for c, _ in REPLY_COLS[:5]:
+            d = paired_diff_ci(g[f"{c}_a"].astype(float), g[f"{c}_b"].astype(float))
+            cells.append(f"{100 * d['diff']:+.1f} [{100 * d['lo']:+.1f}, {100 * d['hi']:+.1f}] p={d['p']:.3f}")
+        rows.append(f"| {LANG[lang]} | {snr} | " + " | ".join(cells) + " |")
+    return "\n".join(rows)
+
+
+def fig_reply(reply: dict):
+    conds = [(l, s) for l in LANG for s in ["clean", "0"]]
+    fig, ax = plt.subplots(figsize=(8, 3.4))
+    w = 0.8 / len(reply)
+    for i, (run, m) in enumerate(reply.items()):
+        for k, (lang, snr) in enumerate(conds):
+            r = m[(m.lang == lang) & (m.snr == snr)]
+            if r.empty:
+                continue
+            v, lo, hi = (100 * r[c].iloc[0] for c in ["acceptable", "acceptable_lo", "acceptable_hi"])
+            x = k + (i - (len(reply) - 1) / 2) * w
+            ax.bar(x, v, w * 0.92, color=REPLY_RUNS[run][1], label=REPLY_RUNS[run][0] if k == 0 else None)
+            ax.errorbar(x, v, [[v - lo], [hi - v]], color=INK2, lw=1, capsize=0)
+            ax.annotate(f"{v:.0f}", (x, hi), xytext=(0, 3), textcoords="offset points",
+                        ha="center", fontsize=8.5, color=INK2)
+    ax.set_xticks(range(len(conds)), [f"{LANG[l]}\n{'clean' if s == 'clean' else '0 dB'}" for l, s in conds])
+    ax.set_ylabel("% acceptable replies (95% CI)")
+    ax.set_title("Reply mode: acceptable replies (on-topic, faithful, factual, right language)", loc="left")
+    ax.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1, 1))
+    ax.grid(axis="x", visible=False)
+    fig.tight_layout()
+    fig.savefig(FIG / "reply_acceptable.png", dpi=160)
+    plt.close(fig)
+
+
+def lid_table() -> str:
+    p = RES / "lid" / "metrics.csv"
+    if not p.exists():
+        return ""
+    m = pd.read_csv(p, dtype={"snr": str})
+    rows = ["| Lang | SNR | n | Accuracy % | Mean p(true lang) | LID s (p50) |", "|" + "---|" * 6]
+    for r in m.itertuples():
+        rows.append(f"| {LANG.get(r.lang, r.lang)} | {r.snr} | {r.n} | {pct(r.accuracy, r.acc_lo, r.acc_hi)} "
+                    f"| {r.mean_p_true:.3f} | {r.lid_s_p50:.3f} |")
+    return "\n".join(rows)
 
 
 def main():
@@ -215,7 +295,20 @@ def main():
             out += [paired_table(scored["baseline"], scored[run], RUNS[run][0]), ""]
     if "ml_medium_control" in scored and "improved" in scored:
         out += [paired_table(scored["ml_medium_control"], scored["improved"],
-                             "Adapted + faster-whisper vs Size control").replace("− Baseline", "− Size control"), ""]
+                             "Adapted + faster-whisper").replace("− Baseline", "− Size control (whisper-medium)"), ""]
+    reply_scored, reply_metrics = {}, {}
+    for run in REPLY_RUNS:
+        s, m = load(run)
+        if s is not None:
+            reply_scored[run], reply_metrics[run] = s, m
+    if reply_metrics:
+        out += ["## Reply mode (grounded rubric; 40 utterances per language x clean / 0 dB)\n",
+                reply_table(reply_metrics), ""]
+        if {"baseline_reply", "improved_reply"} <= set(reply_scored):
+            out += [reply_paired(reply_scored["baseline_reply"], reply_scored["improved_reply"]), ""]
+        fig_reply(reply_metrics)
+    if lid_table():
+        out += ["## Automatic language identification (stock whisper-medium, hi vs ml)\n", lid_table(), ""]
     fig_cer_vs_snr(metrics)
     fig_bars(metrics, "judge_correct", "Responses judged correct", "correctness.png")
     fig_bars(metrics, "judge_halluc", "Responses with hallucinated content", "hallucination.png")

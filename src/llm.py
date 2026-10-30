@@ -1,4 +1,7 @@
-"""Instruction-tuned LLM (4-bit, greedy) that restates an Indic transcript in the same language."""
+"""Instruction-tuned LLM (4-bit, greedy) that turns an Indic transcript into a same-language response.
+
+Two tasks: "restate" (faithful restatement, scored against the gold transcript) and
+"reply" (an assistant reply, scored with the grounded rubric in response_metrics)."""
 import time
 
 import torch
@@ -17,9 +20,22 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_messages(transcript: str, lang: str) -> list[dict]:
+REPLY_PROMPT = (
+    "You are a voice assistant for Indian users. You receive an automatic speech "
+    "recognition transcript of what the user said in {language}; it may contain "
+    "recognition errors. Reply to the user helpfully in {language}, written in {script} "
+    "script, in 1-3 sentences. If they asked something, answer it; if they made a "
+    "statement, respond to it (for example with a relevant comment or a follow-up "
+    "question). If part of the transcript is unintelligible, respond only to what you "
+    "understood, or ask them to repeat it; do not guess what they meant. Do not state "
+    "facts you are not sure of, and do not reply in English."
+)
+PROMPTS = {"restate": SYSTEM_PROMPT, "reply": REPLY_PROMPT}
+
+
+def build_messages(transcript: str, lang: str, task: str = "restate") -> list[dict]:
     return [
-        {"role": "system", "content": SYSTEM_PROMPT.format(language=LANG_NAMES[lang],
+        {"role": "system", "content": PROMPTS[task].format(language=LANG_NAMES[lang],
                                                            script=SCRIPTS[lang])},
         {"role": "user", "content": transcript},
     ]
@@ -80,8 +96,12 @@ class LLM:
                 "llm_s": total, "out_tokens": int((new != self.tok.eos_token_id).sum())}
 
     TOKENS_PER_SPEECH_SECOND = 30  # max over our FLEURS refs is 22.3 (Malayalam), +35% headroom
+    REPLY_MAX_TOKENS = 320  # 1-3 sentences; Malayalam needs ~2x Hindi's tokens per sentence
 
-    def respond(self, transcript: str, lang: str, duration_s: float) -> dict:
+    def respond(self, transcript: str, lang: str, duration_s: float, task: str = "restate") -> dict:
+        if task == "reply":
+            return self.chat(build_messages(transcript, lang, "reply"),
+                             max_new_tokens=min(self.max_new_tokens, self.REPLY_MAX_TOKENS))
         # A restatement can't say more than was spoken, so the token cap scales with audio
         # duration. Indic text is token-heavy (Malayalam refs average ~200 Qwen3 tokens), so
         # one fixed budget would truncate long answers; capping by transcript length instead

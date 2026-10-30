@@ -15,7 +15,7 @@ asr:
 llm:
   model: Qwen/Qwen3-4B-Instruct-2507
   load_in_4bit: true
-  max_new_tokens: 768           # upper bound; per-item cap = 1.5x transcript tokens + 32 (src/llm.py)
+  max_new_tokens: 768           # upper bound; per-item cap = 30 tok/s x audio duration + 32 (src/llm.py)
 judge:
   model: Qwen/Qwen2.5-7B-Instruct
   load_in_4bit: true

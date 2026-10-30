@@ -108,3 +108,21 @@ def test_ratio_ci_contains_point():
 def test_paired_diff_zero_when_equal():
     a = np.array([1, 2, 3.0])
     assert paired_diff_ci(a, a)["diff"] == 0
+
+
+def test_parse_reply_judge():
+    from src.metrics.response_metrics import parse_reply_judge
+    r = parse_reply_judge('Here: {"relevance": "on_topic", "misattribution": false, '
+                          '"factual_hallucination": "true", "clarification": false, "span": "x"}')
+    assert r["rj_relevance"] == "on_topic" and r["rj_factual_halluc"] is True and r["rj_parse_ok"]
+    assert parse_reply_judge('{"relevance": "off-topic", "misattribution": true}')["rj_relevance"] == "off_topic"
+    bad = parse_reply_judge("I think it is relevant")
+    assert bad["rj_parse_ok"] is False and bad["rj_relevance"] == "off_topic"
+
+
+def test_parse_reply_judge_malformed_json_fallback():
+    from src.metrics.response_metrics import parse_reply_judge
+    raw = '{"claim": "none", "relevance": "partial", "misattribution": true, "factual_hallucination": false, ' \
+          '"clarification": false, "span": "he said "this" here"}'  # unescaped quotes -> invalid JSON
+    r = parse_reply_judge(raw)
+    assert r["rj_parse_ok"] and r["rj_relevance"] == "partial" and r["rj_misattribution"] is True

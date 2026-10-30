@@ -11,7 +11,7 @@ def add_rtf(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize(df: pd.DataFrame) -> dict:
     d = add_rtf(df[~df.is_warmup])
-    out = {"n": len(d)}
+    out = {"n_timed": len(d)}  # warm-ups excluded; quality metrics use all items
     for col in ["asr_s", "ttft_s", "llm_s", "e2e_s", "asr_rtf", "e2e_rtf", "tok_per_s"]:
         x = d[col].to_numpy(dtype=float)
         x = x[~np.isnan(x)]  # LLM columns are NaN in --asr-only runs

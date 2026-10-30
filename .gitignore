@@ -26,10 +26,20 @@ data/audio/
 hf_cache/
 .cache/
 
+# Converted faster-whisper (CTranslate2) models, rebuilt automatically from the HF checkpoints
+models/
+
 # Run logs and smoke-test runs
 logs/
 *.log
 results/*smoke*/
+
+# Reply-judge verdicts from the superseded judge prompt (current prompt hash: 6ee508bd)
+results/*/judge_cache_2ba2db4f.jsonl
+
+# Build tools for the .docx report (reinstall with: cd report && npm install)
+report/node_modules/
+report/pylib/
 
 # Secrets
 .env

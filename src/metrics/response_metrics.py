@@ -141,3 +141,79 @@ def cohen_kappa(a: list, b: list) -> float:
     po = np.mean(a == b)
     pe = sum(np.mean(a == c) * np.mean(b == c) for c in cats)
     return float((po - pe) / (1 - pe)) if pe < 1 else 1.0
+
+
+# ---------- reply mode: grounded rubric ----------
+# There is no single gold reply, so every criterion is defined against what the user
+# ACTUALLY said (gold transcript + English meaning). The judge never sees the ASR
+# transcript, so a reply built on a misrecognition is scored as a failure.
+#   relevance       on_topic  - engages with the actual subject and content of the utterance
+#                   partial   - right general topic, but responds to a detail not said
+#                   off_topic - responds to something else (e.g. a misrecognised topic)
+#   misattribution  the reply says/implies the user said something they did not
+#   factual_halluc  the reply asserts a specific factual claim that contradicts the
+#                   utterance or is clearly false
+#   clarification   the reply asks the user to repeat/clarify (reported separately:
+#                   appropriate after failed ASR, unnecessary otherwise)
+#   acceptable      on_topic AND not misattribution AND not factual_halluc AND in-script
+
+REPLY_JUDGE_PROMPT = """You are grading a voice assistant. The user spoke one sentence in {language}. The assistant only had an automatic (possibly wrong) transcript of it, and had to reply to the user in {language}.
+
+WHAT THE USER ACTUALLY SAID ({language}): {reference}
+MEANING (English translation): {gold}
+ASSISTANT'S REPLY: {response}
+
+Judge the reply against what the user ACTUALLY said, using these definitions:
+- "relevance": "on_topic" if the reply engages with the actual subject and content of what the user said; "partial" if it is on the right general topic but responds to a detail the user did not say; "off_topic" if it responds to something else.
+- "misattribution": true if the reply says or implies that the user said something they did not say, in a way that changes the meaning (e.g. a different place, number, claim or topic). Paraphrasing or summarising what the user said in different words is NOT misattribution. If it is true, you must quote the misattributed part in "span"; if you cannot quote one, answer false.
+- "factual_hallucination": true ONLY if the reply asserts a specific factual claim that is false, or that contradicts what the user said. A reply MAY add information the user did not mention: correct background knowledge is NOT hallucination. Opinions, questions and general remarks are not factual claims.
+- "clarification": true if the reply asks the user to repeat or clarify what they said.
+
+First write the single most doubtful factual claim in the reply (or "none") in "claim", then decide.
+Reply with JSON only: {{"claim": "<claim or none>", "relevance": "on_topic|partial|off_topic", "misattribution": true|false, "factual_hallucination": true|false, "clarification": true|false, "span": "<the misattributed or false text, or empty>"}}"""
+
+# Cache files are keyed by this, so editing the rubric can never reuse stale verdicts.
+REPLY_JUDGE_VERSION = __import__("hashlib").sha1(REPLY_JUDGE_PROMPT.encode("utf-8")).hexdigest()[:8]
+
+RELEVANCE_SCORE = {"on_topic": 1.0, "partial": 0.5, "off_topic": 0.0}
+
+
+def _as_bool(v) -> bool:
+    return v if isinstance(v, bool) else str(v).lower() == "true"
+
+
+def parse_reply_judge(text: str) -> dict:
+    m = re.search(r"\{.*\}", text, re.S)
+    try:
+        d = json.loads(m.group(0)) if m else {}
+    except json.JSONDecodeError:
+        d = {}
+    if not d:
+        # Fallback for malformed JSON (e.g. unescaped quotes inside a Malayalam span): pull each
+        # field out on its own so one bad string doesn't discard the whole verdict.
+        for key in ["relevance", "claim", "span"]:
+            f = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text)
+            if f:
+                d[key] = f.group(1)
+        for key in ["misattribution", "factual_hallucination", "clarification"]:
+            f = re.search(rf'"{key}"\s*:\s*"?(true|false)', text, re.I)
+            if f:
+                d[key] = f.group(1).lower() == "true"
+    rel = str(d.get("relevance", "")).lower().strip().replace("-", "_").replace(" ", "_")
+    if rel not in RELEVANCE_SCORE:  # unparseable -> worst case on relevance, flagged
+        return {"rj_relevance": "off_topic", "rj_misattribution": False, "rj_factual_halluc": False,
+                "rj_clarification": False, "rj_span": "", "rj_parse_ok": False}
+    return {"rj_relevance": rel, "rj_misattribution": _as_bool(d.get("misattribution", False)),
+            "rj_factual_halluc": _as_bool(d.get("factual_hallucination", False)),
+            "rj_clarification": _as_bool(d.get("clarification", False)),
+            "rj_span": str(d.get("span", "")), "rj_claim": str(d.get("claim", "")), "rj_parse_ok": True}
+
+
+def judge_reply_one(llm, response: str, reference: str, gold: str, lang: str) -> dict:
+    """`llm` is a src.llm.LLM loaded with the judge model."""
+    if not (response or "").strip():
+        return {"rj_relevance": "off_topic", "rj_misattribution": False, "rj_factual_halluc": False,
+                "rj_clarification": False, "rj_span": "", "rj_parse_ok": True}
+    msg = [{"role": "user", "content": REPLY_JUDGE_PROMPT.format(
+        language=LANG_NAMES[lang], reference=reference, gold=gold, response=response)}]
+    return parse_reply_judge(llm.chat(msg, max_new_tokens=400)["text"])  # Malayalam spans are token-heavy

@@ -8,14 +8,14 @@ data:
 asr:
   backend: faster_whisper       # CTranslate2
   models:
-    hi_in: vasista22/whisper-hindi-small
+    hi_in: vasista22/whisper-hindi-small@e760aba89d31418e3c99068d1711911bbbd489b5   # refs/pr/5: SFconvertbot safetensors (main has only .bin)
     ml_in: vrclc/Whisper-medium-Malayalam
   device: cuda
   dtype: float16
 llm:
   model: Qwen/Qwen3-4B-Instruct-2507
   load_in_4bit: true
-  max_new_tokens: 768           # upper bound; per-item cap = 1.5x transcript tokens + 32 (src/llm.py)
+  max_new_tokens: 768           # upper bound; per-item cap = 30 tok/s x audio duration + 32 (src/llm.py)
 judge:
   model: Qwen/Qwen2.5-7B-Instruct
   load_in_4bit: true

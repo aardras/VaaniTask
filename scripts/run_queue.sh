@@ -18,14 +18,7 @@ step() {  # step <name> <cmd...>
   fi
 }
 
-# Wait for the baseline LLM stage that is already running in another process.
-while [ "$(wc -l < results/baseline/llm.jsonl 2>/dev/null || echo 0)" -lt 720 ] || \
-      powershell.exe -NoProfile -Command "if (Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { \$_.CommandLine -like '*run_pipeline.py*' }) { exit 0 } else { exit 1 }"; do
-  sleep 30
-done
-echo "$(date +%H:%M:%S) baseline LLM stage finished"
-
-step baseline_merge     $PY scripts/run_pipeline.py --config configs/baseline.yaml   # writes predictions.jsonl
+step baseline           $PY scripts/run_pipeline.py --config configs/baseline.yaml   # resumes; writes predictions.jsonl
 step eval_baseline      $PY scripts/evaluate.py --config configs/baseline.yaml --run results/baseline
 step oracle             $PY scripts/run_pipeline.py --config configs/baseline.yaml --oracle
 step eval_oracle        $PY scripts/evaluate.py --config configs/baseline.yaml --run results/baseline_oracle
