@@ -12,7 +12,7 @@ A reproducible pipeline that takes **Hindi or Malayalam speech** and returns a *
 | Document | Contents |
 |---|---|
 | [REPORT.md](REPORT.md) | Full technical report: methods, every result with 95% CIs, limitations |
-| `VaaniTask1_Aardra.docx` / `.pdf` | Submission report (10 pages) |
+| `VaaniTask2_Aardra.docx` / `.pdf` | Submission report (10 pages) |
 | [results/summary.md](results/summary.md) | Auto-generated tables for every run |
 | [PLAN.md](PLAN.md) | Design log: every decision and why it changed |
 
